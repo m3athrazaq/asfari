@@ -1,0 +1,55 @@
+# Web app checks on every change: the built files match the source (tools/build.mjs --check), the data
+# logic test (tests/core.test.cjs) and the browser test (tests/web.test.cjs) pass: first start, every
+# screen in Arabic and English, a new trip, Excel backup and restore on a "new phone", merging, rows
+# edited in Excel, the Schengen count, the PDF report, broken and crafted files, offline use.
+name: Web app (checks)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Built files match the source
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          node tools/build.mjs --check
+          node --check app.js
+          node --check sw.js
+          node --check vendor/pdf.js
+
+      - name: Data logic test (merge, Excel edits, Schengen, badges)
+        run: |
+          node tests/core.test.cjs | tee core-test.txt
+          ! grep -E "^(FAIL|ERROR)" core-test.txt
+          grep -q "^PASS" core-test.txt
+
+      - name: Browser test
+        run: |
+          mkdir -p "$RUNNER_TEMP/pw" && cd "$RUNNER_TEMP/pw"
+          npm init -y > /dev/null
+          npm install --ignore-scripts --no-audit --no-fund playwright@1.63.0
+          npx playwright install --with-deps chromium
+          cd "$GITHUB_WORKSPACE"
+          python3 -m http.server 8765 --bind 127.0.0.1 > /dev/null 2>&1 &
+          sleep 1
+          NODE_PATH="$RUNNER_TEMP/pw/node_modules" node tests/web.test.cjs | tee web-test.txt
+          ! grep -E "^(FAIL|ERROR)" web-test.txt
+          grep -q "^PASS no JS errors" web-test.txt

@@ -1,0 +1,137 @@
+# Builds the signed Android APK and publishes it in Releases.
+# Stable link: https://github.com/<owner>/<repo>/releases/latest/download/asfari.apk
+# Signing: native/signing/asfari-release.p12.enc, unlocked with the SIGNING_PASSPHRASE secret,
+# only in the signing step (the build itself never sees the key).
+name: Android app (APK)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'index.html'
+      - 'app.js'
+      - 'manifest.webmanifest'
+      - '*.png'
+      - 'vendor/**'
+      - 'fonts/**'
+      - 'data/**'
+      - 'flags/**'
+      - 'native/**'
+      - '.github/workflows/android.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-release
+  cancel-in-progress: true
+
+env:
+  APP_VERSION: '1.0.0'
+  BUILD_NUMBER: ${{ github.run_number }}
+  CERT_SHA256: '59:0F:C2:34:2B:CC:52:31:6D:F5:A5:BF:C5:35:F3:83:8D:D6:E5:17:55:DD:8F:D5:A1:50:83:3F:E7:05:E4:B6'
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    permissions:
+      contents: write   # to publish the release
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      - uses: gradle/actions/wrapper-validation@0723195856401067f7a2779048b490ace7a47d7c # v5.0.2
+
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: native/package-lock.json
+
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Copy the app files into the phone project
+        run: |
+          rm -rf native/www && mkdir -p native/www
+          cp -R index.html app.js manifest.webmanifest *.png vendor fonts data flags native/www/
+          du -sh native/www
+
+      - name: Install Capacitor (no install scripts) and sync the Android project
+        working-directory: native
+        run: |
+          npm ci --ignore-scripts --no-audit --no-fund
+          npx cap sync android
+
+      - name: Build the APK (unsigned)
+        working-directory: native/android
+        run: |
+          export VERSION_CODE=$((BUILD_NUMBER + 100))
+          chmod +x gradlew
+          if ! ./gradlew --no-daemon assembleRelease > "$RUNNER_TEMP/build.log" 2>&1; then
+            grep -E "error:|e: |What went wrong|FAILURE|\.java:[0-9]+" "$RUNNER_TEMP/build.log" | head -40 | while IFS= read -r l; do echo "::error::$l"; done
+            tail -80 "$RUNNER_TEMP/build.log"
+            exit 1
+          fi
+          ls -la app/build/outputs/apk/release/
+
+      - name: Sign the APK
+        env:
+          SIGNING_PASSPHRASE: ${{ secrets.SIGNING_PASSPHRASE }}
+        run: |
+          if [ -z "$SIGNING_PASSPHRASE" ]; then
+            echo "::error::Add the SIGNING_PASSPHRASE secret (Settings > Secrets and variables > Actions) to sign the app."
+            exit 1
+          fi
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          IN=native/android/app/build/outputs/apk/release/app-release-unsigned.apk
+          KS="$RUNNER_TEMP/release.p12"
+          trap 'rm -f "$KS"' EXIT
+          umask 077
+          openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -md sha256 \
+            -in native/signing/asfari-release.p12.enc -out "$KS" -pass env:SIGNING_PASSPHRASE
+          mkdir -p out
+          "$BT/zipalign" -p -f 4 "$IN" "$RUNNER_TEMP/aligned.apk"
+          "$BT/apksigner" sign --ks "$KS" --ks-type PKCS12 --ks-key-alias asfari \
+            --ks-pass env:SIGNING_PASSPHRASE --key-pass env:SIGNING_PASSPHRASE \
+            --out out/asfari.apk "$RUNNER_TEMP/aligned.apk"
+
+      - name: Check the APK
+        run: |
+          APK=out/asfari.apk
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/apksigner" verify --verbose --print-certs "$APK" | tee verify.txt
+          WANT=$(echo "$CERT_SHA256" | tr -d ':' | tr 'A-F' 'a-f')
+          grep -qi "SHA-256 digest: $WANT" verify.txt || { echo "::error::APK is not signed with the app's key"; exit 1; }
+          "$BT/aapt2" dump badging "$APK" | grep -E "^package:|^sdkVersion|^targetSdkVersion|^application-label" | cut -c1-300
+          "$BT/aapt2" dump permissions "$APK" | tee perms.txt
+          if grep -q "android.permission.INTERNET" perms.txt; then echo "::error::The app must not have internet access"; exit 1; fi
+          if "$BT/aapt2" dump xmltree "$APK" --file AndroidManifest.xml | grep -q 'android:debuggable.*0xffffffff'; then echo "::error::Release APK must not be debuggable"; exit 1; fi
+          unzip -l "$APK" | grep -E "assets/public/(index.html|app.js|data/cities.json|vendor/pdf.js|flags/kw.svg)$" | tee assets.txt
+          [ "$(wc -l < assets.txt)" -eq 5 ] || { echo "::error::The app's files are missing from the APK"; exit 1; }
+          ls -la "$APK"
+          sha256sum "$APK" | tee out/sha256.txt
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          TAG="v$APP_VERSION-$BUILD_NUMBER"
+          BASE="https://github.com/$REPO/releases/latest/download"
+          printf '%s\n' \
+            "أسفاري — النسخة $APP_VERSION (بناء $BUILD_NUMBER)" "" \
+            "- **أندرويد:** [asfari.apk]($BASE/asfari.apk) — افتح الرابط على الهاتف، ثم ثبّت الملف واسمح بالتثبيت من المتصفح عند السؤال." \
+            "- التحديثات تُثبَّت فوق النسخة السابقة مع بقاء بياناتك." \
+            "" "SHA-256 للملف: \`$(cut -d' ' -f1 out/sha256.txt)\`" > notes.md
+          set +e
+          gh release create "$TAG" out/asfari.apk --repo "$REPO" --target "$SHA" \
+            --title "أسفاري $APP_VERSION ($BUILD_NUMBER)" --notes-file notes.md --latest > release.log 2>&1
+          rc=$?; cat release.log
+          if [ $rc -ne 0 ]; then echo "::error::$(tr '\n' ' ' < release.log)"; exit 1; fi

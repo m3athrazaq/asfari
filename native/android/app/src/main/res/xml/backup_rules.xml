@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 6-11: Android's own backup keeps only the travel log (not caches, photos or exports). -->
+<full-backup-content>
+    <include domain="file" path="asfari-state.json" />
+</full-backup-content>

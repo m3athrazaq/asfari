@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Asfari</string>
+    <string name="title_activity_main">Asfari</string>
+    <string name="package_name" translatable="false">com.m3athrazaq.asfari</string>
+    <string name="custom_url_scheme" translatable="false">com.m3athrazaq.asfari</string>
+</resources>

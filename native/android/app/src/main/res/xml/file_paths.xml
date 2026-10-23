@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Files the app can hand to another app with a temporary read grant: only the Excel backups,
+     PDF reports and picture cards it has just made, in its cache (shared to Drive, WhatsApp...). -->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <cache-path name="exports" path="exports/" />
+</paths>

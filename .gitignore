@@ -1,0 +1,4 @@
+node_modules/
+native/www/
+*.log
+.DS_Store

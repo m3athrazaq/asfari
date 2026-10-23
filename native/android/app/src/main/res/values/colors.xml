@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- launch screen: the passport navy of the icon -->
+    <color name="mr_splash_background">#1A2440</color>
+    <!-- behind the app's pages: the same paper colour as the web page (light / values-night dark) -->
+    <color name="mr_background">#EDF2F1</color>
+    <color name="mr_navigation_bar">#000000</color>
+</resources>

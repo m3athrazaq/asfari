@@ -1,0 +1,21 @@
+{
+  "appId": "com.m3athrazaq.asfari",
+  "appName": "أسفاري",
+  "webDir": "www",
+  "backgroundColor": "#00000000",
+  "plugins": {
+    "SystemBars": {
+      "insetsHandling": "native",
+      "initialViewportFitValueHint": "cover"
+    }
+  },
+  "android": {
+    "webContentsDebuggingEnabled": false,
+    "allowMixedContent": false
+  },
+  "cordova": {
+    "preferences": {
+      "DisableDeploy": "true"
+    }
+  }
+}
